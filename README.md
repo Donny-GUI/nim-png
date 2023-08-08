@@ -1,4 +1,4 @@
-# nim-png [Compiles 8/8/2023]
+# nim-png ~Compiles 8/8/2023
 Reading, writing PNG format files with all chunk types. Allowing you to programmatically read and edit  png data  and files. [Currently Incomplete]
 
 # PNG INFORMATION

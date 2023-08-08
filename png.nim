@@ -33,6 +33,21 @@ const chunkNames: seq[string] = [
   "zTXt"
 ]
 
+proc getBlendOp(value: uint8): string = 
+  if value == 0:
+    result = "Source"
+  else:
+    result = "Over"
+
+proc getDisposeOp(value: uint8): string = 
+  case value:
+    of 0:
+      result = "None"
+    of 1:
+      result = "Background"
+    of 2:
+      result = "Previous"
+
 proc getColorType(value: int8): string =
   #[
     Read the color type from int to string value
@@ -74,6 +89,9 @@ proc nextChunk(it: var ByteIterator, size: int): openArray[uint8, int8] =
       buffer.add(bt)
   return buffer
 
+proc keepGoing(it: ByteIterator, distance: int8) = 
+  it.index+=distance 
+
 proc bytesToDecimal(bytes: seq[byte]): int =
   var r: int = 0
   for bt in bytes:
@@ -92,7 +110,11 @@ proc nextChars(it: BytesIterator, size:int): openArray[char] =
 proc nextU8(it: BytesIterator): uint8 =
   var buffer = it.nextByte()
   result = int(buffer)
-  
+
+proc nextU16(it: BytesIterator): uint16 =
+  var bytes: openArray[uint8 or uint] = it.nextChunk(2)
+  result = (ord(bytes[0]) shl 8) or ord(bytes[1])
+
 proc nextU32(it: BytesIterator): uint32 =
   var bytes: openArray[uint8 or int8] = it.nextChunk(4)
   result = (ord(bytes[0]) shl 24) or (ord(bytes[1]) shl 16) or (ord(bytes[2]) shl 8) or ord(bytes[3])
@@ -187,16 +209,85 @@ proc readPNG(filePath: string) =
 
     if chunkTag == "IDHR":
       pngHeaderData = readHeaderChunk(ccIter.remainingBytes())
+      var headerWidth: uint32 = ccIter.nextU32()
+      var headerHeight: uint32 = ccIter.nextU32()
+      var  
     elif chunkTag == "PLTE":
       pngPaletteData = readPaletteChunk(ccIter.remainingBytes())
     elif chunkTag == "IDAT":
       pngImageData = readDataChunk(ccIter.remainingBytes())
-    
-
-
+    elif chunkTag == "acTL":
+      var pngNumberOfFrames: uint32 = ccIter.nextU32()
+      var pngNumberOfPlays: uint32 = ccIter.nextU32()
+    elif chunkTag == "fcTL":
+      var frameControlSequenceNumber: uint32 = ccIter.nextU32()
+      var frameControlWidth: uint32 = ccIter.nextU32()
+      var frameControlHeight: uint32 = ccIter.nextU32()
+      var frameControlXOffset: uint32 = ccIter.nextU32()
+      var frameControlYOffset: uint32 = ccIter.nextU32()
+      var frameControlDelayNum: uint16 = ccIter.nextU16()
+      var frameControlDelayDen: uint16 = ccIter.nextU16()
+      var frameControlDisposeOp: uint8 = ccIter.nextU8()
+      var frameControlBlendOp: uint8 = ccIter.nextU8()
+    elif chunkTag == "ifAT":
+      var frameDataChunkSequenceNumber: uint32 = ccIter.nextU32()
+      # incomplete
+    elif chunkTag == "tIME":
+      var imageLastModificationYear: uint16 = ccIter.nextU16()
+      var imageLastModificationMonth: uint8 = ccIter.nextU8()
+      var imageLastModificationDay: uint8 = ccIter.nextU8()
+      var imageLastModificationHour: uint8 = ccIter.nextU8()
+      var imageLastModificationMinute: uint8 = ccIter.nextU8()
+      var imageLastModificationSecond: uint8 = ccIter.nextU8()
+    elif chunkTag == "eXIf":
+      # INCOMPLETE
+      continue  
+    elif chunkTag == "sPLT":
+      var suggestedPaletteName: uint8 = ccIter.nextU8()
+      var suggestedPaletteNullSeparator: uint8 = ccIter.nextU8()
+      var suggestedPaletteSampleDepth: uint8 = ccIter.nextU8()
+      var suggestedPaletteData: openArray[uint8 or int] = ccIter.remainingBytes()
+    elif chunkTag == "pHYs":
+      var physicalPixelDimensionsPixelsPerUnitXAxis: uint32 = ccIter.nextU32()
+      var physicalPixelDimensionsPixelsPerUnitYAxis: uint32 = ccIter.nextU32()
+      var physicalPixelDimensionsPixelsPerUnitSpecifier: uint8 = ccIter.nextU8()
+    elif chunkTag == "hIST":
+      var imageHistogramFrequency: uint16 = ccIter.nextU16()
+      var imageHistogramData: openArray[uint8 or int] = ccIter.remainingBytes()
+    elif chunkTag == "bKGD":
+      var backgroundColorGreyScale: uint16 = ccIter.nextU16()
+      var backgroundColorRed: uint16 = ccIter.nextU16()
+      var backgroundColorGreen: uint16 = ccIter.nextU16()
+      var backgroundColorBlue: uint16 = ccIter.nextU16()
+      var backgroundColorPaletteIndex: uint8 = ccIter.nextU8()
+    elif chunkTag == "iTXt":
+      var internationalTextualDataKeyword: uint8 = ccIter.nextU8()
+      ccIter.keepGoing(1)
+      var internationalTextualDataCompressionFlag: uint8 = ccIter.nextU8()
+      var internationalTextualDataCompressionMethod: uint8 = ccIter.nextU8()
+      var internationalTextualDataLanguageTag: uint8 = ccIter.nextU8()
+      ccIter.keepGoing(1)
+      var internationalTextualDataTranslatedKeyword: uint8 = ccIter.nextU8()
+      ccIter.keepGoing(1)
+      var internationalTextualDataText: openArray[uint8 or int8] = ccIter.remainingBytes()
+    elif chunkTag == "zTXt": # Compressed Textual Data Chunk
+      var compressedTextualDataKeyword: array[uint8 or int8]
+      var compressedTextualDataKeywordValue: uint8 
+      while compressedTextualDataKeyword != 0x00:
+        compressedTextualDataKeywordValue = ccIter.nextU8()
+        compressedTextualDataKeyword.add(compressedTextualDataKeywordValue)
+      var compressedTextualDataCompressionMethod: uint8 = ccIter.nextU8()
+      var compressedTextualDataDataStream: openArray[uint8 or int8] = ccIter.remainingBytes()
+    elif chunkTag == "tEXt":
+      var textualDataKeyword: openArray[uint8 or int8]
+      var textualDataKeywordValue: uint8
+      while textualDataKeywordValue != 0x00:
+        textualDataKeywordValue = ccIter.nextU8()
+        textualDataKeyword.add(textualDataKeywordValue)
+      var textualDataTextString1: openArray[uint8 or int8] = ccIter.remainingBytes()
+      var textualDataTextString: string = bytesToString(textualDataTextString1)
     elif chunkTag == "IEND":
       break
-
     nextAmount = biter.index + 4 
     if nextAmount > byteLength:
       break 

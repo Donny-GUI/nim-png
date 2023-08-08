@@ -2,13 +2,25 @@ import std/os
 import tables
 import strutils
 import zlib 
-import ctypes
+
 
 type
-  ByteIterator = object
+  BytesRef = ref object
     bytes: seq[byte]
     index: int
-    chunkSize: int
+
+type
+  BytesIterator[bytes] = object
+    bytes: BytesRef
+    index: int
+    chunkSize: uint32
+
+type 
+  RGBPixel[red: uint8, green: uint8, blue: uint8] = tuple
+    red: uint8
+    green: uint8
+    blue: uint8 
+  
 
 type
   PNGFile = object
@@ -41,12 +53,12 @@ type
     suggestedPaletteName: uint8
     suggestedPaletteNullSeparator: uint8
     suggestedPaletteSampleDepth: uint8
-    suggestedPaletteData: openArray[uint8 or int8]
+    suggestedPaletteData: openArray[uint8]
     physicalPixelDimensionsPixelsPerUnitXAxis: uint32
     physicalPixelDimensionsPixelsPerUnitYAxis: uint32
     physicalPixelDimensionsPixelsPerUnitSpecifier: uint8
     imageHistogramFrequency: uint16
-    imageHistogramData: openArray[uint8 or int8]
+    imageHistogramData: openArray[uint8]
     backgroundColorGreyScale: uint16
     backgroundColorRed: uint16
     backgroundColorGreen: uint16
@@ -57,16 +69,16 @@ type
     internationalTextualDataCompressionMethod: uint8
     internationalTextualDataLanguageTag: uint8
     internationalTextualDataTranslatedKeyword: uint8
-    internationalTextualDataText: openArray[uint8 or int8]
-    compressedTextualDataKeyword: array[uint8 or int8]
+    internationalTextualDataText: openArray[uint8]
+    compressedTextualDataKeyword: openArray[uint8]
     compressedTextualDataKeywordValue: uint8 
     compressedTextualDataCompressionMethod: uint8 
-    compressedTextualDataDataStream: openArray[uint8 or int8]
-    textualDataKeyword: openArray[uint8 or int8]
+    compressedTextualDataDataStream: openArray[uint8]
+    textualDataKeyword: openArray[uint8]
     textualDataKeywordValue: uint8
-    textualDataTextString1: openArray[uint8 or int8]
+    textualDataTextString1: openArray[uint8]
     textualDataTextString: string
-    palette: openArray[tuple[int, int, int]]
+    palette: openArray
     imageData: openArray[uint8]
     
 
@@ -85,7 +97,7 @@ const
   trueColorIntWithAlphaInt: int8 = 8
 
 
-const chunkNames: seq[string] = [
+const chunkNames: array[0..20, string] = [
   "IHDR", "IDAT", "IEND", "PLTE", 
   "bKGD", "cHRM", "dSIG", "eXIF", 
   "gAMA", "hIST", "iCCP", "iTXt", 
@@ -108,6 +120,8 @@ proc getDisposeOp(value: uint8): string =
       result = "Background"
     of 2:
       result = "Previous"
+    else:
+      return
 
 proc getColorType(value: int8): string =
   #[
@@ -124,33 +138,48 @@ proc getColorType(value: int8): string =
       result = greyScaleWithAlphaString
     of 8:
       result = trueColorWithAlphaString
+    else:
+      return
 
-proc initByteIterator(bytes: seq[byte]): ByteIterator =
+proc newBytesRef(bytes: seq[byte]): BytesRef =
+  result = BytesRef(bytes: bytes, index: 0)
+
+proc initBytesIterator(bytes: seq[byte]): BytesIterator[seq[uint8]] =
   #[
-    initilize a new ByteIterator with bytes
+    initilize a new BytesIterator with bytes
   ]#
-  result.bytes = bytes
-  result.index = 0
+  result.bytes = newBytesRef(bytes)
+  result.index = 0 
+  result.chunkSize = 0
 
-proc hasNext(it: ByteIterator): bool =
-  return it.index < it.bytes.len
+proc hasNext(it: BytesIterator): bool =
+  if it.index < it.bytes.len:
+    result = true
+  else:
+    result = false
 
-proc nextByte(it: var ByteIterator): byte =
-  if hasNext(it):
-    let byteValue = it.bytes[it.index]
+proc incIndex(iter: var BytesIterator[seq[byte]]): bool =
+  if iter.bytes.index < len(iter.bytes.bytes) - 1:
+    iter.bytes.index += 1
+    result = true
+  else:
+    result = false
+
+proc nextByte(it: BytesIterator): byte =
+  if hasNext(it) == true:
+    var byteValue = it.bytes[it.index]
     it.index += 1
-    return byteValue  
+    return byteValue
+  return 0
 
-proc nextChunk(it: var ByteIterator, size: int): openArray[uint8, int8] = 
-  var buffer: openArray[uint8 or int8]
-  var bt: byte
+proc nextChunk(it: BytesIterator, size: int): auto = 
+  var bt: uint8
   for i in 0..<size:
     if it.hasNext():
-      bt = nextByte(it)
-      buffer.add(bt)
-  return buffer
+      bt = it.nextByte()
+      result.add(bt)
 
-proc keepGoing(it: ByteIterator, distance: int8) = 
+proc keepGoing(it: BytesIterator, distance: int8) = 
   it.index+=distance 
 
 proc bytesToDecimal(bytes: seq[byte]): int =
@@ -165,7 +194,7 @@ proc nextChars(it: BytesIterator, size:int): openArray[char] =
   for i in 0..size:
     ui = it.nextU8()
     buffer.add(chr(ui))
-    fbi.index+=1
+    it.index+=1
   return buffer
 
 proc nextU8(it: BytesIterator): uint8 =
@@ -177,11 +206,11 @@ proc nextU16(it: BytesIterator): uint16 =
   result = (ord(bytes[0]) shl 8) or ord(bytes[1])
 
 proc nextU32(it: BytesIterator): uint32 =
-  var bytes: openArray[uint8 or int8] = it.nextChunk(4)
+  var bytes: openArray[uint8] = it.nextChunk(4)
   result = (ord(bytes[0]) shl 24) or (ord(bytes[1]) shl 16) or (ord(bytes[2]) shl 8) or ord(bytes[3])
 
 proc nextU64(it: BytesIterator): uint64 =
-  var bytes: openArray[uint8 or int8] = it.nextChunk(8)
+  var bytes: openArray[uint8] = it.nextChunk(8)
   result = uint64(bytes[0]) shl 56 or
            uint64(bytes[1]) shl 48 or
            uint64(bytes[2]) shl 40 or
@@ -191,8 +220,8 @@ proc nextU64(it: BytesIterator): uint64 =
            uint64(bytes[6]) shl 8 or
            uint64(bytes[7])
 
-proc remainingBytes(bit: BytesIterator): openArray[uint8 or int8] = 
-  var bytes: openArray[uint8 or int8] = bit.bytes[bit.index..bit.length]
+proc remainingBytes(bit: BytesIterator): openArray[uint8] = 
+  var bytes: openArray[uint8] = bit.bytes[bit.index..bit.length]
   return bytes
 
 proc bytesToString(bytes: seq[byte]): string =
@@ -200,8 +229,8 @@ proc bytesToString(bytes: seq[byte]): string =
   for i, bt in pairs(bytes):
     result[i] = chr(bt)
 
-proc nextString(it: var ByteIterator, size: int): string = 
-  var byteSequence: openArray[uint8 or int8] = it.nextChunk(size)
+proc nextString(it: var BytesIterator, size: int): string = 
+  var byteSequence: openArray[uint8] = it.nextChunk(size)
   result = newString(size)
   for i, bt in pairs(byteSequence):
     result[i] = chr(bt)
@@ -214,10 +243,7 @@ proc getBytes(filePath: string): seq[byte] =
 
 proc readHeaderChunk(bytes: seq[byte]): Table = 
   var headerProps: Table[string, int] = initTable[string, string]()
-  var tags: seq[tuple[int, string]] = [
-    (4, "width"), (4, "height"), (1, "bit depth"), 
-    (1, "color type"), (1, "compression method"), 
-    (1, "filter method"), (1, "interlace method") ]
+  var tags: seq[seq] = [(4, "width"), (4, "height"), (1, "bit depth"), (1, "color type"), (1, "compression method"), (1, "filter method"), (1, "interlace method") ]
   var tagLen = len(tags)
   var citer = BytesIterator(bytes)
   for i in 0..tagLen:
@@ -227,9 +253,9 @@ proc readHeaderChunk(bytes: seq[byte]): Table =
       headerProps[tags[i][1]] = citer.nextU8()
   return headerProps
 
-proc readPaletteChunk(bytes: openArray[uint8 or int]): openArray[tuple[int, int, int]] = 
-  var palette: openArray[tuple[int, int, int]]
-  var numberOfColors = len(bytes)//3
+proc readPaletteChunk(bytes: openArray[uint8]): openArray[RGBPixel] = 
+  var palette: openArray
+  var numberOfColors = len(bytes).div(3)
   var count: int = 0
   var arr: array[int, int, int]
   var citer = BytesIterator(bytes)
@@ -241,28 +267,25 @@ proc readPaletteChunk(bytes: openArray[uint8 or int]): openArray[tuple[int, int,
       palette.add(arr)
   return palette
 
-proc readDataChunk(bytes: openArray[uint8 or int8]): openArray =
-  var data: seq[uint8] = bytes.toSeq()
-  var bytesPointer: ptr = ptr(bytes)
-  var dataculong = ctypes.culong(data.len)
-  var resultPointer: ptr = ptr(result)
-  uncompress(resultPointer, bytesPointer, dataculong)
+proc readDataChunk(bytes: openArray[uint8]): auto =
+  var r: seq[uint8]
+  var rptr: ptr uint8 = addr r[0]
+  var refPtr: ptr uint8 = unsafeAddr bytes[0]
+  var dataculong = system.culong(bytes.len)
+  discard uncompress(rptr, dataculong, refPtr, dataculong)
+  return r
   
 proc readPNG(filePath: string) =
-  var bytes = getBytes(filePath) 
-  var biter = ByteIterator(bytes)
+  var bytes: seq[byte] = getBytes(filePath) 
+  var biter = initBytesIterator(bytes)
   var byteLength = len(bytes)
   var signature: string = biter.nextString(8)
   var nextSize: uint32
-  var nextChunk: openArray[uint8 or int8]
-  var chunks: openArray[openArray[uint8 or int8]]
+  var nextChunk: openArray[uint8]
+  var chunks: openArray[openArray[uint8]]
   var nextAmount: uint32
   var chunkTag: string
   var chunkTags: openArray[string] = @[]
-  var props: openArray[string, ]
-  var pngHeaderData: Table[string, string]
-  var pngPaletteData: openArray[tuple[int, int, int]]
-  var pngImageData: string
   # PNG Properties
   # Description of variable:
   #  the section of the data then the name of the value  header(inside the IHDR)Width(the value of the width) -> headerWidth
@@ -294,12 +317,12 @@ proc readPNG(filePath: string) =
   var suggestedPaletteName: uint8
   var suggestedPaletteNullSeparator: uint8
   var suggestedPaletteSampleDepth: uint8
-  var suggestedPaletteData: openArray[uint8 or int8]
+  var suggestedPaletteData: openArray[uint8]
   var physicalPixelDimensionsPixelsPerUnitXAxis: uint32
   var physicalPixelDimensionsPixelsPerUnitYAxis: uint32
   var physicalPixelDimensionsPixelsPerUnitSpecifier: uint8
   var imageHistogramFrequency: uint16
-  var imageHistogramData: openArray[uint8 or int8]
+  var imageHistogramData: openArray[uint8]
   var backgroundColorGreyScale: uint16
   var backgroundColorRed: uint16
   var backgroundColorGreen: uint16
@@ -310,16 +333,16 @@ proc readPNG(filePath: string) =
   var internationalTextualDataCompressionMethod: uint8
   var internationalTextualDataLanguageTag: uint8
   var internationalTextualDataTranslatedKeyword: uint8
-  var internationalTextualDataText: openArray[uint8 or int8]
+  var internationalTextualDataText: openArray[uint8]
   var compressedTextualDataKeyword: array[uint8 or int8]
   var compressedTextualDataKeywordValue: uint8 
   var compressedTextualDataCompressionMethod: uint8 
-  var compressedTextualDataDataStream: openArray[uint8 or int8]
-  var textualDataKeyword: openArray[uint8 or int8]
+  var compressedTextualDataDataStream: openArray[uint8]
+  var textualDataKeyword: openArray[uint8]
   var textualDataKeywordValue: uint8
-  var textualDataTextString1: openArray[uint8 or int8]
+  var textualDataTextString1: openArray[uint8]
   var textualDataTextString: string
-  var palette: openArray[tuple[int, int, int]]
+  var palette: openArray[RGBPixel]
   var imageData: openArray[uint8]
 
   while true:
@@ -419,12 +442,12 @@ proc initPNGFile(filePath: cstring): PNGFile =
 
 proc read(pngObject: PNGFile) =
   var bytes = getBytes(pngObject.filePath) 
-  var biter = ByteIterator(bytes)
+  var biter = initBytesIterator(bytes)
   var byteLength = len(bytes)
   var signature: string = biter.nextString(8)
   var nextSize: uint32
-  var nextChunk: openArray[uint8 or int8]
-  var chunks: openArray[openArray[uint8 or int8]]
+  var nextChunk: openArray[uint8]
+  var chunks: openArray[openArray[uint8]]
   var nextAmount: uint32
   var chunkTag: string
   var chunkTags: openArray[string] = @[]
@@ -434,7 +457,7 @@ proc read(pngObject: PNGFile) =
   while true:
     nextSize = biter.nextU32()
     nextChunk = biter.nextChunk(nextSize)
-    ccIter = BytesIterator(nextChunk)
+    ccIter = initBytesIterator(nextChunk)
     chunkTag = ccIter.nextString(8)
     chunkTags.add(chunkTag)
     if chunkTag == "IDHR":

@@ -1,23 +1,13 @@
 import std/os
 import tables
 import strutils
-
+import zlib 
 
 type
   ByteIterator = object
     bytes: seq[byte]
     index: int
     chunkSize: int
-
-type 
-  Chunk = object
-    length: uint8
-    name: string
-    data: seq[uint8]
-    crc: array[4, uint8]
-
-type 
-  Tag = tuple[byteCount: int, valueName: string]
 
 const 
   dtString = 0
@@ -32,9 +22,6 @@ const chunkNames: seq[string] = [
   "zTXt"
 ]
 
-type  
-    DataTag = tuple[bitSize: int, valueName: string, dataType: int]
-
 proc initByteIterator(bytes: seq[byte]): ByteIterator =
   result.bytes = bytes
   result.index = 0
@@ -48,8 +35,8 @@ proc nextByte(it: var ByteIterator): byte =
     it.index += 1
     return byteValue  
 
-proc nextChunk(it: var ByteIterator, size: int): seq[byte] = 
-  var buffer: seq[byte]
+proc nextChunk(it: var ByteIterator, size: int): openArray[uint8, int8] = 
+  var buffer: openArray[uint8 or int8]
   var bt: byte
   for i in 0..<size:
     if it.hasNext():
@@ -63,26 +50,48 @@ proc bytesToDecimal(bytes: seq[byte]): int =
     r = r * 256 + int(bt)
   return r
 
-proc nextDecimal(it: var ByteIterator, size: int): int =
-  var buffer = it.nextChunk(size)
-  result = 0
-  for bt in buffer:
-    result = result * 256 + int(bt)
+proc nextChars(it: BytesIterator, size:int): openArray[char] =
+  var buffer: openArray[char]
+  var ui: uint8
+  for i in 0..size:
+    ui = it.nextU8()
+    buffer.add(chr(ui))
+    fbi.index+=1
+  return buffer
 
-proc remainingBytes(bit: BytesIterator): seq[byte] = 
-  var bytes: seq[byte] = bit.bytes[bit.index..bit.length]
+proc nextU8(it: BytesIterator): uint8 =
+  var buffer = it.nextByte()
+  result = int(buffer)
+  
+proc nextU32(it: BytesIterator): uint32 =
+  var bytes: openArray[uint8 or int8] = it.nextChunk(4)
+  result = (ord(bytes[0]) shl 24) or (ord(bytes[1]) shl 16) or (ord(bytes[2]) shl 8) or ord(bytes[3])
+
+proc nextU64(it: BytesIterator): uint64 =
+  var bytes: openArray[uint8 or int8] = it.nextChunk(8)
+  result = uint64(bytes[0]) shl 56 or
+           uint64(bytes[1]) shl 48 or
+           uint64(bytes[2]) shl 40 or
+           uint64(bytes[3]) shl 32 or
+           uint64(bytes[4]) shl 24 or
+           uint64(bytes[5]) shl 16 or
+           uint64(bytes[6]) shl 8 or
+           uint64(bytes[7])
+
+proc remainingBytes(bit: BytesIterator): openArray[uint8 or int8] = 
+  var bytes: openArray[uint8 or int8] = bit.bytes[bit.index..bit.length]
   return bytes
 
 proc bytesToString(bytes: seq[byte]): string =
   result = newString(bytes.len)
-  for i, byte in pairs(bytes):
-    result[i] = char(byte)
+  for i, bt in pairs(bytes):
+    result[i] = chr(bt)
 
 proc nextString(it: var ByteIterator, size: int): string = 
-  var byteSequence = it.nextChunk(size)
+  var byteSequence: openArray[uint8 or int8] = it.nextChunk(size)
   result = newString(size)
   for i, bt in pairs(byteSequence):
-    result[i] = char(bt)
+    result[i] = chr(bt)
 
 proc getBytes(filePath: string): seq[byte] = 
   var file = open(filePath, fmRead)
@@ -91,7 +100,7 @@ proc getBytes(filePath: string): seq[byte] =
   return bytes
 
 proc readHeaderChunk(bytes: seq[byte]): Table = 
-  var headerProps: Table[string, string] = initTable[string, string]()
+  var headerProps: Table[string, int] = initTable[string, string]()
   var tags: seq[tuple[int, string]] = [
     (4, "width"), (4, "height"), (1, "bit depth"), 
     (1, "color type"), (1, "compression method"), 
@@ -100,9 +109,9 @@ proc readHeaderChunk(bytes: seq[byte]): Table =
   var citer = BytesIterator(bytes)
   for i in 0..tagLen:
     if tags[0] == 4:
-      headerProps[tags[i][1]] = citer.nextString(tags[i][0])
+      headerProps[tags[i][1]] = citer.nextU32()
     else:
-      headerProps[tags[i][1]] = citer.nextDecimal(tags[i][0])
+      headerProps[tags[i][1]] = citer.nextU8()
   return headerProps
 
 proc readDataChunk(bytes: seq[byte]): Table = 
@@ -119,8 +128,8 @@ proc readDataChunk(bytes: seq[byte]): Table =
       dataProps[tags[i][1]] = citer.nextDecimal(tags[i][0])
   return dataProps
 
-proc readPaletteChunk(bytes: seq[byte]): seq[tuple[int, int, int]] = 
-  var palette: seq[tuple[int, int, int]]
+proc readPaletteChunk(bytes: openArray[uint8 or int]): openArray[tuple[int, int, int]] = 
+  var palette: openArray[tuple[int, int, int]]
   var numberOfColors = len(bytes)//3
   var count: int = 0
   var arr: array[int, int, int]
@@ -138,35 +147,35 @@ proc readPNG(filePath: string) =
   var biter = ByteIterator(bytes)
   var byteLength = len(bytes)
   var signature: string = biter.nextString(8)
-  var nextSize: int
-  var nextChunk: seq[byte]
-  var chunks: seq[seq[byte]]
-  var nextAmount: int
+  var nextSize: uint32
+  var nextChunk: openArray[uint8 or int8]
+  var chunks: openArray[openArray[uint8 or int8]]
+  var nextAmount: uint32
   var chunkTag: string
-  var chunkTags: seq[string] = []
-  var props: seq[string, ]
+  var chunkTags: openArray[string] = @[]
+  var props: openArray[string, ]
   var pngHeaderData: Table[string, string]
+  var pngPaletteData: openArray[tuple[int, int, int]]
 
   while true:
     remaining = @[]
-    nextSize = biter.nextDecimal(4)
+    nextSize = biter.nextU32()
     nextChunk = biter.nextChunk(nextSize)
     ccIter = BytesIterator(nextChunk)
     chunkTag = ccIter.nextString(8)
     chunkTags.add(chunkTag)
+
     if chunkTag == "IDHR":
       pngHeaderData = readHeaderChunk(ccIter.remainingBytes())
     elif chunkTag == "PLTE":
       pngPaletteData = readPaletteChunk(ccIter.remainingBytes())
     elif chunkTag == "IDAT":
+      pngImageData = 
+
 
     elif chunkTag == "IEND":
       break
 
-    case chunkTag:
-      of "IDHR":
-        propDict["header"] = readHeaderChunk(cciter.bytes[4:])
-    
     nextAmount = biter.index + 4 
     if nextAmount > byteLength:
       break

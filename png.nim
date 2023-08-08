@@ -11,7 +11,8 @@ type
     chunkSize: int
 
 type
-  PNGFile = object 
+  PNGFile = object
+    filePath: cstring
     headerWidth: uint32
     headerHeight: uint32
     headerBitDepth: uint8
@@ -411,9 +412,13 @@ proc readPNG(filePath: string) =
     nextAmount = biter.index + 4 
     if nextAmount > byteLength:
       break 
-  
-proc read(pngObject: PNGFile, filePath: string) =
-  var bytes = getBytes(filePath) 
+
+proc initPNGFile(filePath: cstring): PNGFile = 
+  result = PNGFile
+  result.filePath = filePath 
+
+proc read(pngObject: PNGFile) =
+  var bytes = getBytes(pngObject.filePath) 
   var biter = ByteIterator(bytes)
   var byteLength = len(bytes)
   var signature: string = biter.nextString(8)
@@ -432,7 +437,6 @@ proc read(pngObject: PNGFile, filePath: string) =
     ccIter = BytesIterator(nextChunk)
     chunkTag = ccIter.nextString(8)
     chunkTags.add(chunkTag)
-
     if chunkTag == "IDHR":
       png.headerWidth = ccIter.nextU32()
       png.headerHeight = ccIter.nextU32()

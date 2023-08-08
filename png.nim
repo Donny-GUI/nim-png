@@ -12,6 +12,17 @@ type
 const 
   dtString = 0
   dtInt = 1
+  greyScaleString: string = "GrayScale"
+  greyScaleInt: int8 = 0 
+  trueColorString: string = "TrueColor"
+  trueColorInt: int8 = 2
+  indexedColorString: string = "IndexedColor"
+  indexedColorInt: int8 = 4
+  greyScaleWithAlphaString: string = "GreyScaleWithAlpha"
+  greyScaleIntWithAlphaInt: int8 = 6 
+  trueColorWithAlphaString: string = "TrueColorWithAlpha"
+  trueColorIntWithAlphaInt: int8 = 8
+
 
 const chunkNames: seq[string] = [
   "IHDR", "IDAT", "IEND", "PLTE", 
@@ -22,7 +33,26 @@ const chunkNames: seq[string] = [
   "zTXt"
 ]
 
+proc getColorType(value: int8): string =
+  #[
+    Read the color type from int to string value
+  ]# 
+  case value:
+    of 0:
+      result = greyScaleString
+    of 2:
+      result = trueColorString
+    of 4:
+      result = indexedColorString
+    of 6:
+      result = greyScaleWithAlphaString
+    of 8:
+      result = trueColorWithAlphaString
+
 proc initByteIterator(bytes: seq[byte]): ByteIterator =
+  #[
+    initilize a new ByteIterator with bytes
+  ]#
   result.bytes = bytes
   result.index = 0
 
@@ -114,20 +144,6 @@ proc readHeaderChunk(bytes: seq[byte]): Table =
       headerProps[tags[i][1]] = citer.nextU8()
   return headerProps
 
-proc readDataChunk(bytes: seq[byte]): Table = 
-  var dataHeader: Table[string, string] = initTable[string, string]()
-  var tags: seq[tuple[int, string]] = [
-    (4, "deflate compression"), (1, "fcheck value"), 
-    (1, "compressed DEFLATE block"), (4, "zlib check value"), (4, "crc")]
-  var tagLen = len(tags)
-  var citer = BytesIterator(bytes)
-  for i in 0..tagLen:
-    if tags[0] == 4:
-      dataProps[tags[i][1]] = citer.nextString(tags[i][0])
-    else:
-      dataProps[tags[i][1]] = citer.nextDecimal(tags[i][0])
-  return dataProps
-
 proc readPaletteChunk(bytes: openArray[uint8 or int]): openArray[tuple[int, int, int]] = 
   var palette: openArray[tuple[int, int, int]]
   var numberOfColors = len(bytes)//3
@@ -141,6 +157,10 @@ proc readPaletteChunk(bytes: openArray[uint8 or int]): openArray[tuple[int, int,
       count = 0
       palette.add(arr)
   return palette
+
+proc readDataChunk(bytes: openArray[uint8 or int8]): openArray =
+  var data: seq[uint8] = bytes.toSeq()
+  result = uncompress(data, data.len)
   
 proc readPNG(filePath: string) =
   var bytes = getBytes(filePath) 
@@ -156,6 +176,7 @@ proc readPNG(filePath: string) =
   var props: openArray[string, ]
   var pngHeaderData: Table[string, string]
   var pngPaletteData: openArray[tuple[int, int, int]]
+  var pngImageData: string
 
   while true:
     nextSize = biter.nextU32()
@@ -169,7 +190,8 @@ proc readPNG(filePath: string) =
     elif chunkTag == "PLTE":
       pngPaletteData = readPaletteChunk(ccIter.remainingBytes())
     elif chunkTag == "IDAT":
-      pngImageData = 
+      pngImageData = readDataChunk(ccIter.remainingBytes())
+    
 
 
     elif chunkTag == "IEND":

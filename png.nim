@@ -158,7 +158,6 @@ proc readPNG(filePath: string) =
   var pngPaletteData: openArray[tuple[int, int, int]]
 
   while true:
-    remaining = @[]
     nextSize = biter.nextU32()
     nextChunk = biter.nextChunk(nextSize)
     ccIter = BytesIterator(nextChunk)

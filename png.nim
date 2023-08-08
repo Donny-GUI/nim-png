@@ -178,5 +178,5 @@ proc readPNG(filePath: string) =
 
     nextAmount = biter.index + 4 
     if nextAmount > byteLength:
-      break
+      break 
   
